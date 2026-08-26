@@ -1,0 +1,21 @@
+# Telegram session & auth - NEVER commit these, they grant full account access
+*.session
+*.session-journal
+config.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Design source files (large binaries, not needed to run or build the app)
+design_source/
+
+# OS/editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.claude-agent-shadow/
