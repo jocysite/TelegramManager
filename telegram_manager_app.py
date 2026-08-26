@@ -1190,10 +1190,20 @@ class TelegramManagerApp(tk.Tk):
         return from_dt, to_dt
 
     async def _do_list_messages(self, from_dt, to_dt):
+        # offset_date jumps the search straight to messages just after
+        # to_dt via Telegram's own API instead of paginating client-side
+        # through every newer message first - without it, an account with
+        # a lot of history after the target range could take a very long
+        # time (and look "stuck") before ever reaching the target window.
+        offset_date = to_dt.astimezone(datetime.timezone.utc) + datetime.timedelta(minutes=1)
+
         results = []
+        dialogs_scanned = 0
         async for dialog in self.client.iter_dialogs():
             matches = []
-            async for message in self.client.iter_messages(dialog.id, from_user="me"):
+            async for message in self.client.iter_messages(
+                dialog.id, from_user="me", offset_date=offset_date
+            ):
                 msg_local_dt = message.date.astimezone().replace(tzinfo=None)
                 if from_dt <= msg_local_dt <= to_dt:
                     matches.append(message)
@@ -1201,6 +1211,9 @@ class TelegramManagerApp(tk.Tk):
                     break
             if matches:
                 results.append((dialog.name, dialog.id, matches))
+            dialogs_scanned += 1
+            if dialogs_scanned % 25 == 0:
+                self.log(f"Scanned {dialogs_scanned} chat(s) so far...")
         return results
 
     def on_preview_click(self):
