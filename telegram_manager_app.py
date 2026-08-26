@@ -351,7 +351,10 @@ class StatusPill(tk.Canvas):
 
     def _redraw(self):
         self.delete("all")
-        w = self.winfo_width() or int(self["width"])
+        # Use the just-configured width, not winfo_width() - the latter can
+        # still report the previous (smaller) size for one frame after a
+        # resize, which let the text spill past the pill's background.
+        w = int(self["width"])
         h = int(self["height"])
         round_rectangle(self, 0, 0, w, h, radius=self.radius, fill=COLOR_CARD, outline=COLOR_CARD_BORDER)
         dot_color = COLOR_SUCCESS if self.connected else COLOR_DANGER
