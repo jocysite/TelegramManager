@@ -19,3 +19,8 @@ Thumbs.db
 .vscode/
 .idea/
 .claude-agent-shadow/
+
+# PyInstaller build output
+build/
+dist/
+*.spec
