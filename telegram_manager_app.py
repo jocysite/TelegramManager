@@ -6,10 +6,14 @@ Features (single window, sidebar navigation):
     - Setup: store your API credentials and log in
     - Delete Messages: remove your own messages across all chats/groups
       within a date range
-    - Sessions & Security: view/terminate logged-in devices, set 2FA
+    - Sessions & Security: view/terminate logged-in devices, manage
+      connected websites, set/remove 2FA, delete your account
+    - Privacy: control who can see your last seen, photo, phone number,
+      forwards, calls, invites, and voice messages
+    - Blocked Users: view, block, and unblock users
     - QR Login: log another device into your account without SMS
-    - Post Story: publish a photo to your Telegram Story
-    - Profile: edit your name/bio
+    - Post Story: publish an image or video to your Telegram Story
+    - Profile: edit your name/username/bio and profile photo
     - How To: usage instructions and where to get API credentials
 
 Works for ANY Telegram account - enter your own credentials in the Setup
@@ -29,6 +33,7 @@ import datetime
 import json
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
@@ -38,21 +43,45 @@ import keyring
 import keyring.errors
 from telethon import TelegramClient, helpers
 from telethon.errors import FloodWaitError
+from telethon.password import compute_check
 from telethon.tl.functions.account import (
+    DeleteAccountRequest,
     GetAuthorizationsRequest,
+    GetPasswordRequest,
+    GetPrivacyRequest,
+    GetWebAuthorizationsRequest,
     ResetAuthorizationRequest,
+    ResetWebAuthorizationRequest,
+    ResetWebAuthorizationsRequest,
+    SetPrivacyRequest,
     UpdateProfileRequest,
+    UpdateUsernameRequest,
 )
 from telethon.tl.functions.auth import ImportLoginTokenRequest
+from telethon.tl.functions.contacts import BlockRequest, GetBlockedRequest, UnblockRequest
+from telethon.tl.functions.photos import (
+    DeletePhotosRequest,
+    GetUserPhotosRequest,
+    UploadProfilePhotoRequest,
+)
 from telethon.tl.functions.stories import SendStoryRequest
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.types import (
-    InputMediaUploadedPhoto,
     InputPeerSelf,
+    InputPrivacyKeyChatInvite,
+    InputPrivacyKeyForwards,
+    InputPrivacyKeyPhoneCall,
+    InputPrivacyKeyPhoneNumber,
+    InputPrivacyKeyProfilePhoto,
+    InputPrivacyKeyStatusTimestamp,
+    InputPrivacyKeyVoiceMessages,
     InputPrivacyValueAllowAll,
     InputPrivacyValueAllowContacts,
+    InputPrivacyValueDisallowAll,
+    PeerUser,
 )
 from telethon.tl.types.auth import LoginTokenMigrateTo, LoginTokenSuccess
+from telethon.utils import get_input_media, get_input_photo, is_video
 
 # Credentials are stored via the OS's secure credential vault (Windows
 # Credential Manager, protected by DPAPI) instead of a plain file - only
@@ -60,7 +89,12 @@ from telethon.tl.types.auth import LoginTokenMigrateTo, LoginTokenSuccess
 KEYRING_SERVICE = "TelegramManagerApp"
 KEYRING_USERNAME = "credentials"
 
-ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+def resource_path(*parts):
+    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, *parts)
+
+
+ASSETS_DIR = resource_path("assets")
 
 
 def load_config():
@@ -144,11 +178,46 @@ NAV_ITEMS = [
     ("setup", "⚙", "Setup"),
     ("delete", "\U0001F5D1", "Delete Messages"),
     ("sessions", "\U0001F6E1", "Sessions & Security"),
+    ("privacy", "\U0001F512", "Privacy"),
+    ("blocked", "\U0001F6AB", "Blocked Users"),
     ("qr", "▦", "QR Login"),
     ("story", "\U0001F5BC", "Post Story"),
     ("profile", "\U0001F464", "Profile"),
     ("help", "\U0001F4D6", "How To"),
 ]
+
+# Privacy keys exposed on the Privacy page, in the same order Telegram's own
+# apps show them. Each maps to a simple 3-way choice - custom per-user
+# exceptions (as in the official apps) are intentionally not exposed here.
+PRIVACY_FIELDS = [
+    ("last_seen", "Last Seen & Online", InputPrivacyKeyStatusTimestamp),
+    ("photo", "Profile Photos", InputPrivacyKeyProfilePhoto),
+    ("phone", "Phone Number", InputPrivacyKeyPhoneNumber),
+    ("forwards", "Forwarded Messages", InputPrivacyKeyForwards),
+    ("calls", "Calls", InputPrivacyKeyPhoneCall),
+    ("invites", "Group & Channel Invites", InputPrivacyKeyChatInvite),
+    ("voice", "Voice Messages", InputPrivacyKeyVoiceMessages),
+]
+PRIVACY_OPTIONS = ["Everyone", "My Contacts", "Nobody"]
+
+
+def privacy_rules_to_option(rules):
+    if not rules:
+        return "Everyone"
+    name = type(rules[0]).__name__
+    if name == "PrivacyValueDisallowAll":
+        return "Nobody"
+    if name == "PrivacyValueAllowContacts":
+        return "My Contacts"
+    return "Everyone"
+
+
+def option_to_privacy_rule(option):
+    if option == "Nobody":
+        return InputPrivacyValueDisallowAll()
+    if option == "My Contacts":
+        return InputPrivacyValueAllowContacts()
+    return InputPrivacyValueAllowAll()
 
 
 def round_rectangle(canvas, x1, y1, x2, y2, radius=16, **kwargs):
@@ -455,12 +524,38 @@ anyone else's account.
      "Terminate Selected", or use "Terminate All Others" to keep only
      the session this app is using.
    - Use "Set / Change 2FA Password" to add or update your Two-Step
-     Verification password. This is the single best protection against
-     someone else logging into your account even if they get a login
-     code. Store this password somewhere safe - Telegram cannot recover
-     it for you if you forget it and have no recovery email set.
+     Verification password, with an optional hint and recovery email.
+     This is the single best protection against someone else logging
+     into your account even if they get a login code. Store this
+     password somewhere safe - Telegram cannot recover it for you if
+     you forget it and have no recovery email set. Use "Remove 2FA
+     Password" to turn Two-Step Verification off again.
+   - "Connected Websites" lists every site/bot you signed into with
+     "Log in with Telegram" (Telegram's own Settings > Devices >
+     Connected Websites). Disconnect individual ones or all at once.
+   - "Danger zone" - "Delete My Account" permanently deletes your
+     Telegram account and everything in it. Requires typing DELETE to
+     confirm, and your 2FA password if you have one set. This cannot
+     be undone.
 
-5) QR LOGIN PAGE (requires: pip install opencv-python)
+5) PRIVACY PAGE
+   - Click "Load Current Settings" to see who can currently see your
+     last seen/online status, profile photos, phone number, forwarded
+     messages, calls, group/channel invites, and voice messages.
+   - Change any dropdown to Everyone / My Contacts / Nobody, then click
+     "Save All Changes" to apply them - this mirrors Telegram's own
+     Settings > Privacy and Security screen (per-contact exceptions
+     aren't supported here, only the three main options).
+
+6) BLOCKED USERS PAGE
+   - Click "Refresh" to list users you've blocked (they can't message
+     you or see your last seen/online status).
+   - Select one or more and click "Unblock Selected" to let them
+     message you again.
+   - To block someone, enter their @username (or the phone number of an
+     existing contact) and click "Block".
+
+7) QR LOGIN PAGE (requires: pip install opencv-python)
    - Use this to log a phone/tablet into your account without SMS.
    - On the new device, open Telegram and tap the QR code icon on the
      phone-number screen so it displays a QR code.
@@ -469,20 +564,24 @@ anyone else's account.
    - QR codes refresh every ~30 seconds; if one expires, let the new
      device show a fresh one and keep the scan running.
 
-6) POST STORY PAGE
-   - Choose a photo, optionally write a caption, and pick who can see it
+8) POST STORY PAGE
+   - Choose an image or video, optionally write a caption, and pick who can see it
      (Everyone or Contacts only).
    - Click "Post Story" and confirm. Note: Telegram limits how many
      stories a free (non-Premium) account can post per week - if you hit
      that limit you'll see a clear error telling you when it resets.
 
-7) PROFILE PAGE
-   - Click "Load Current" to fetch your current name/bio, edit the
-     fields, then "Save Changes" to update them on Telegram.
+9) PROFILE PAGE
+   - Click "Load Current" to fetch your current name/username/bio, edit
+     the fields, then "Save Changes" to update them on Telegram.
+     Clearing the username field and saving removes your username.
+   - Use "Upload New Photo..." to set a new profile photo, or "Remove
+     Current Photo" to delete the one Telegram currently shows for you.
 
 SAFETY NOTES
-   - Deleting messages and terminating sessions are NOT reversible.
-     Always use Preview / review the list before confirming.
+   - Deleting messages, terminating sessions, and deleting your account
+     are NOT reversible. Always use Preview / review lists before
+     confirming, and be certain before using "Delete My Account".
    - Never share your API hash, your login code, your 2FA password, or
      the .session file this app creates. Anyone with any of those can
      access your account.
@@ -672,6 +771,8 @@ class TelegramManagerApp(tk.Tk):
             "setup": self._build_setup_page,
             "delete": self._build_delete_page,
             "sessions": self._build_sessions_page,
+            "privacy": self._build_privacy_page,
+            "blocked": self._build_blocked_page,
             "qr": self._build_qr_page,
             "story": self._build_story_page,
             "profile": self._build_profile_page,
@@ -869,7 +970,7 @@ class TelegramManagerApp(tk.Tk):
         self._session_auth_by_row = {}
 
         pw_card = Card(page)
-        pw_card.pack(side="top", fill="x")
+        pw_card.pack(side="top", fill="x", pady=(0, 16))
         card_label(pw_card.body, "Two-Step Verification (2FA)", secondary=False, bold=True).grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
         )
@@ -879,12 +980,132 @@ class TelegramManagerApp(tk.Tk):
         self.current_pw_var = tk.StringVar()
         styled_entry(pw_card.body, self.current_pw_var, width=30, show="*").grid(row=1, column=1, sticky="w", pady=6)
 
-        card_label(pw_card.body, "New password").grid(row=2, column=0, sticky="e", padx=(0, 10), pady=6)
+        card_label(pw_card.body, "New password (blank to remove 2FA)").grid(row=2, column=0, sticky="e", padx=(0, 10), pady=6)
         self.new_pw_var = tk.StringVar()
         styled_entry(pw_card.body, self.new_pw_var, width=30, show="*").grid(row=2, column=1, sticky="w", pady=6)
 
-        RoundedButton(pw_card.body, "Set / Change 2FA Password", command=self.on_set_2fa_click).grid(
-            row=3, column=0, columnspan=2, pady=(12, 0)
+        card_label(pw_card.body, "Hint (optional)").grid(row=3, column=0, sticky="e", padx=(0, 10), pady=6)
+        self.pw_hint_var = tk.StringVar()
+        styled_entry(pw_card.body, self.pw_hint_var, width=30).grid(row=3, column=1, sticky="w", pady=6)
+
+        card_label(pw_card.body, "Recovery email (optional)").grid(row=4, column=0, sticky="e", padx=(0, 10), pady=6)
+        self.pw_email_var = tk.StringVar()
+        styled_entry(pw_card.body, self.pw_email_var, width=30).grid(row=4, column=1, sticky="w", pady=6)
+
+        pw_btn_row = tk.Frame(pw_card.body, bg=COLOR_CARD)
+        pw_btn_row.grid(row=5, column=0, columnspan=2, pady=(12, 0))
+        RoundedButton(pw_btn_row, "Set / Change 2FA Password", command=self.on_set_2fa_click).pack(
+            side="left", padx=(0, 10)
+        )
+        RoundedButton(
+            pw_btn_row, "Remove 2FA Password", command=self.on_remove_2fa_click, style="danger-outline"
+        ).pack(side="left")
+
+        web_card = Card(page)
+        web_card.pack(side="top", fill="x", pady=(0, 16))
+        card_label(
+            web_card.body, "Connected Websites (signed in via 'Log in with Telegram')",
+            secondary=False, bold=True,
+        ).pack(side="top", anchor="w", pady=(0, 12))
+        web_btn_row = tk.Frame(web_card.body, bg=COLOR_CARD)
+        web_btn_row.pack(side="top", fill="x", pady=(0, 10))
+        RoundedButton(
+            web_btn_row, "Refresh", command=self.on_refresh_web_sessions_click, style="secondary"
+        ).pack(side="left", padx=(0, 10))
+        RoundedButton(
+            web_btn_row, "Disconnect Selected", command=self.on_disconnect_web_selected_click,
+            style="danger-outline",
+        ).pack(side="left", padx=(0, 10))
+        RoundedButton(
+            web_btn_row, "Disconnect All", command=self.on_disconnect_web_all_click, style="danger-outline"
+        ).pack(side="left")
+
+        web_columns = ("domain", "browser", "ip", "active")
+        self.web_sessions_tree = ttk.Treeview(web_card.body, columns=web_columns, show="headings", height=4)
+        web_headings = {"domain": "Website", "browser": "Browser / Platform", "ip": "IP / Region", "active": "Last active"}
+        web_widths = {"domain": 200, "browser": 190, "ip": 150, "active": 140}
+        for col in web_columns:
+            self.web_sessions_tree.heading(col, text=web_headings[col])
+            self.web_sessions_tree.column(col, width=web_widths[col], anchor="w", stretch=False)
+        self.web_sessions_tree.tag_configure("odd", background=COLOR_ROW_ALT)
+        self.web_sessions_tree.pack(side="top", fill="x")
+        self._web_auth_by_row = {}
+
+        danger_card = Card(page)
+        danger_card.pack(side="top", fill="x")
+        card_label(danger_card.body, "Danger zone", secondary=False, bold=True).pack(
+            side="top", anchor="w", pady=(0, 8)
+        )
+        tk.Label(
+            danger_card.body,
+            text=(
+                "Permanently deletes your Telegram account, every message, and removes you "
+                "from all chats, groups, and channels. This cannot be undone."
+            ),
+            bg=COLOR_CARD, fg=COLOR_TEXT_SECONDARY, wraplength=700, justify="left", font=(FONT_FAMILY, 9),
+        ).pack(side="top", anchor="w", pady=(0, 10))
+        RoundedButton(
+            danger_card.body, "Delete My Account...", command=self.on_delete_account_click, style="danger-outline"
+        ).pack(side="top", anchor="w")
+
+    def _build_privacy_page(self, page):
+        card = Card(page)
+        card.pack(side="top", fill="x")
+        card_label(card.body, "Who can see or contact you", secondary=False, bold=True).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 14)
+        )
+
+        self.privacy_vars = {}
+        row = 1
+        for key_id, label, _key_cls in PRIVACY_FIELDS:
+            card_label(card.body, label).grid(row=row, column=0, sticky="e", padx=(0, 10), pady=6)
+            var = tk.StringVar(value="Everyone")
+            self.privacy_vars[key_id] = var
+            ttk.Combobox(
+                card.body, textvariable=var, values=PRIVACY_OPTIONS, state="readonly", width=16
+            ).grid(row=row, column=1, sticky="w", pady=6)
+            row += 1
+
+        btn_row = tk.Frame(card.body, bg=COLOR_CARD)
+        btn_row.grid(row=row, column=0, columnspan=2, sticky="w", pady=(14, 0))
+        RoundedButton(
+            btn_row, "Load Current Settings", command=self.on_load_privacy_click, style="secondary"
+        ).pack(side="left", padx=(0, 10))
+        RoundedButton(btn_row, "Save All Changes", command=self.on_save_privacy_click).pack(side="left")
+
+    def _build_blocked_page(self, page):
+        list_card = Card(page)
+        list_card.pack(side="top", fill="x", pady=(0, 16))
+
+        btn_row = tk.Frame(list_card.body, bg=COLOR_CARD)
+        btn_row.pack(side="top", fill="x", pady=(0, 12))
+        RoundedButton(btn_row, "Refresh", command=self.on_refresh_blocked_click).pack(side="left", padx=(0, 10))
+        RoundedButton(
+            btn_row, "Unblock Selected", command=self.on_unblock_click, style="danger-outline"
+        ).pack(side="left")
+
+        columns = ("name", "username")
+        self.blocked_tree = ttk.Treeview(list_card.body, columns=columns, show="headings", height=8)
+        self.blocked_tree.heading("name", text="Name")
+        self.blocked_tree.heading("username", text="Username")
+        self.blocked_tree.column("name", width=380, stretch=True)
+        self.blocked_tree.column("username", width=200, stretch=False)
+        self.blocked_tree.tag_configure("odd", background=COLOR_ROW_ALT)
+        self.blocked_tree.pack(side="top", fill="x")
+        self._blocked_user_by_row = {}
+
+        add_card = Card(page)
+        add_card.pack(side="top", fill="x")
+        card_label(add_card.body, "Block someone", secondary=False, bold=True).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 10)
+        )
+        card_label(add_card.body, "Username, or phone of an existing contact").grid(
+            row=1, column=0, sticky="e", padx=(0, 10), pady=6
+        )
+        self.block_target_var = tk.StringVar()
+        styled_entry(add_card.body, self.block_target_var, width=30).grid(row=1, column=1, sticky="w", pady=6)
+        RoundedButton(add_card.body, "Block", command=self.on_block_click, style="danger-outline").grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(10, 0)
         )
 
     def _build_qr_page(self, page):
@@ -910,7 +1131,7 @@ class TelegramManagerApp(tk.Tk):
 
         row = tk.Frame(card.body, bg=COLOR_CARD)
         row.pack(side="top", fill="x", pady=(0, 4))
-        RoundedButton(row, "Choose Image...", command=self.on_choose_photo_click, style="secondary").pack(side="left")
+        RoundedButton(row, "Choose Media...", command=self.on_choose_photo_click, style="secondary").pack(side="left")
         tk.Label(row, textvariable=self.photo_path_var, bg=COLOR_CARD, fg=COLOR_TEXT_MUTED, font=(FONT_FAMILY, 9)).pack(
             side="left", padx=10
         )
@@ -930,7 +1151,7 @@ class TelegramManagerApp(tk.Tk):
 
     def _build_profile_page(self, page):
         card = Card(page)
-        card.pack(side="top", fill="x")
+        card.pack(side="top", fill="x", pady=(0, 16))
 
         RoundedButton(card.body, "Load Current", command=self.on_load_profile_click, style="secondary").grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 16)
@@ -938,18 +1159,37 @@ class TelegramManagerApp(tk.Tk):
 
         self.first_name_var = tk.StringVar()
         self.last_name_var = tk.StringVar()
+        self.username_var = tk.StringVar()
 
         card_label(card.body, "First name").grid(row=1, column=0, sticky="e", padx=(0, 10), pady=6)
         styled_entry(card.body, self.first_name_var, width=36).grid(row=1, column=1, sticky="w", pady=6)
         card_label(card.body, "Last name").grid(row=2, column=0, sticky="e", padx=(0, 10), pady=6)
         styled_entry(card.body, self.last_name_var, width=36).grid(row=2, column=1, sticky="w", pady=6)
-        card_label(card.body, "Bio").grid(row=3, column=0, sticky="ne", padx=(0, 10), pady=6)
+        card_label(card.body, "Username (without @, blank to remove)").grid(
+            row=3, column=0, sticky="e", padx=(0, 10), pady=6
+        )
+        styled_entry(card.body, self.username_var, width=36).grid(row=3, column=1, sticky="w", pady=6)
+        card_label(card.body, "Bio").grid(row=4, column=0, sticky="ne", padx=(0, 10), pady=6)
         self.bio_text = styled_text(card.body, height=4, width=40)
-        self.bio_text.grid(row=3, column=1, sticky="w", pady=6)
+        self.bio_text.grid(row=4, column=1, sticky="w", pady=6)
 
         RoundedButton(card.body, "Save Changes", command=self.on_save_profile_click).grid(
-            row=4, column=0, columnspan=2, pady=(14, 0)
+            row=5, column=0, columnspan=2, pady=(14, 0)
         )
+
+        photo_card = Card(page)
+        photo_card.pack(side="top", fill="x")
+        card_label(photo_card.body, "Profile Photo", secondary=False, bold=True).pack(
+            side="top", anchor="w", pady=(0, 10)
+        )
+        photo_btn_row = tk.Frame(photo_card.body, bg=COLOR_CARD)
+        photo_btn_row.pack(side="top", fill="x")
+        RoundedButton(
+            photo_btn_row, "Upload New Photo...", command=self.on_upload_profile_photo_click, style="secondary"
+        ).pack(side="left", padx=(0, 10))
+        RoundedButton(
+            photo_btn_row, "Remove Current Photo", command=self.on_remove_profile_photo_click, style="danger-outline"
+        ).pack(side="left")
 
     def _build_help_page(self, page):
         card = Card(page)
@@ -1383,9 +1623,14 @@ class TelegramManagerApp(tk.Tk):
             return
         new_password = self.new_pw_var.get()
         current_password = self.current_pw_var.get() or None
+        hint = self.pw_hint_var.get().strip()
+        email = self.pw_email_var.get().strip() or None
         if not new_password:
-            messagebox.showerror("Missing password", "Enter a new password.")
+            messagebox.showerror("Missing password", "Enter a new password (or use 'Remove 2FA Password').")
             return
+
+        def email_code_callback(length):
+            return self.ask_on_main_thread(f"Enter the {length}-digit code sent to {email}:")
 
         def on_done(future):
             try:
@@ -1396,11 +1641,319 @@ class TelegramManagerApp(tk.Tk):
             self.log("2FA password updated. Store it somewhere safe.")
             self.new_pw_var.set("")
             self.current_pw_var.set("")
+            self.pw_hint_var.set("")
+            self.pw_email_var.set("")
 
         self.async_loop.submit(
-            self.client.edit_2fa(current_password=current_password, new_password=new_password),
+            self.client.edit_2fa(
+                current_password=current_password,
+                new_password=new_password,
+                hint=hint,
+                email=email,
+                email_code_callback=email_code_callback if email else None,
+            ),
             on_done,
         )
+
+    def on_remove_2fa_click(self):
+        if not self.require_connected():
+            return
+        current_password = self.current_pw_var.get()
+        if not current_password:
+            messagebox.showerror("Missing password", "Enter your current 2FA password to remove it.")
+            return
+        if not messagebox.askyesno("Confirm", "Remove your Two-Step Verification password?"):
+            return
+
+        def on_done(future):
+            try:
+                future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            self.log("2FA password removed.")
+            self.current_pw_var.set("")
+
+        self.async_loop.submit(self.client.edit_2fa(current_password=current_password), on_done)
+
+    # ------------------------------------------------------------------
+    # Connected Websites handlers
+    # ------------------------------------------------------------------
+    def on_refresh_web_sessions_click(self):
+        if not self.require_connected():
+            return
+
+        def on_done(future):
+            try:
+                result = future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            for row in self.web_sessions_tree.get_children():
+                self.web_sessions_tree.delete(row)
+            self._web_auth_by_row = {}
+            for i, auth in enumerate(result.authorizations):
+                tag = "odd" if i % 2 else ""
+                row_id = self.web_sessions_tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        auth.domain,
+                        f"{auth.browser} / {auth.platform}",
+                        f"{auth.ip} {auth.region}".strip(),
+                        str(auth.date_active),
+                    ),
+                    tags=(tag,),
+                )
+                self._web_auth_by_row[row_id] = auth
+            self.log(f"Found {len(result.authorizations)} connected website session(s).")
+
+        self.async_loop.submit(self.client(GetWebAuthorizationsRequest()), on_done)
+
+    async def _terminate_web(self, hashes):
+        for h in hashes:
+            await self.client(ResetWebAuthorizationRequest(hash=h))
+
+    def on_disconnect_web_selected_click(self):
+        if not self.require_connected():
+            return
+        selected = self.web_sessions_tree.selection()
+        if not selected:
+            messagebox.showinfo("Nothing selected", "Select one or more website sessions first.")
+            return
+        auths = [self._web_auth_by_row[r] for r in selected if r in self._web_auth_by_row]
+        if not messagebox.askyesno("Confirm", f"Disconnect {len(auths)} website session(s)?"):
+            return
+
+        def on_done(future):
+            try:
+                future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            self.log(f"Disconnected {len(auths)} website session(s).")
+            self.on_refresh_web_sessions_click()
+
+        self.async_loop.submit(self._terminate_web([a.hash for a in auths]), on_done)
+
+    def on_disconnect_web_all_click(self):
+        if not self.require_connected():
+            return
+        if not messagebox.askyesno("Confirm", "Disconnect ALL connected websites and bots?"):
+            return
+
+        def on_done(future):
+            try:
+                future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            self.log("Disconnected all website sessions.")
+            self.on_refresh_web_sessions_click()
+
+        self.async_loop.submit(self.client(ResetWebAuthorizationsRequest()), on_done)
+
+    # ------------------------------------------------------------------
+    # Danger zone - account deletion
+    # ------------------------------------------------------------------
+    async def _do_delete_account(self, reason, password_plain):
+        pwd = await self.client(GetPasswordRequest())
+        check = None
+        if pwd.has_password:
+            if not password_plain:
+                raise RuntimeError(
+                    "This account has a 2FA password set - re-run and enter it to confirm deletion."
+                )
+            check = compute_check(pwd, password_plain)
+        await self.client(DeleteAccountRequest(reason=reason, password=check))
+
+    def on_delete_account_click(self):
+        if not self.require_connected():
+            return
+        if not messagebox.askyesno(
+            "Delete account?",
+            "This PERMANENTLY deletes your Telegram account, every message, and removes "
+            "you from every chat, group, and channel. This CANNOT be undone. Are you "
+            "absolutely sure you want to continue?",
+            icon="warning",
+        ):
+            return
+        confirm_text = simpledialog.askstring(
+            "Confirm deletion",
+            "Type DELETE (all caps) to confirm permanent account deletion:",
+            parent=self,
+        )
+        if confirm_text != "DELETE":
+            self.log("Account deletion cancelled.")
+            return
+        password_plain = simpledialog.askstring(
+            "2FA password",
+            "If Two-Step Verification is enabled, enter your password now "
+            "(leave blank if you don't have one set):",
+            show="*",
+            parent=self,
+        )
+        if password_plain is None:
+            self.log("Account deletion cancelled.")
+            return
+
+        self.log("Deleting account - this cannot be undone...")
+
+        def on_done(future):
+            try:
+                future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            self.connected = False
+            self.client = None
+            clear_config()
+            self.has_saved_credentials = False
+            self.saved_status_var.set("No saved credentials on this machine yet.")
+            self.status_var.set("Not connected")
+            self.log("Account deleted. Saved credentials on this machine were also cleared.")
+            messagebox.showinfo("Account deleted", "Your Telegram account has been permanently deleted.")
+
+        self.async_loop.submit(
+            self._do_delete_account("User requested deletion via TeleManager", password_plain), on_done
+        )
+
+    # ------------------------------------------------------------------
+    # Privacy page handlers
+    # ------------------------------------------------------------------
+    async def _do_load_privacy(self):
+        values = {}
+        for key_id, _label, key_cls in PRIVACY_FIELDS:
+            result = await self.client(GetPrivacyRequest(key_cls()))
+            values[key_id] = privacy_rules_to_option(result.rules)
+        return values
+
+    def on_load_privacy_click(self):
+        if not self.require_connected():
+            return
+        self.log("Loading privacy settings...")
+
+        def on_done(future):
+            try:
+                values = future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            for key_id, option in values.items():
+                self.privacy_vars[key_id].set(option)
+            self.log("Privacy settings loaded.")
+
+        self.async_loop.submit(self._do_load_privacy(), on_done)
+
+    async def _do_save_privacy(self, values):
+        for key_id, _label, key_cls in PRIVACY_FIELDS:
+            rule = option_to_privacy_rule(values[key_id])
+            await self.client(SetPrivacyRequest(key=key_cls(), rules=[rule]))
+
+    def on_save_privacy_click(self):
+        if not self.require_connected():
+            return
+        values = {key_id: var.get() for key_id, var in self.privacy_vars.items()}
+        if not messagebox.askyesno("Confirm", "Apply these privacy settings to your Telegram account?"):
+            return
+        self.log("Saving privacy settings...")
+
+        def on_done(future):
+            try:
+                future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            self.log("Privacy settings saved.")
+
+        self.async_loop.submit(self._do_save_privacy(values), on_done)
+
+    # ------------------------------------------------------------------
+    # Blocked Users page handlers
+    # ------------------------------------------------------------------
+    async def _do_refresh_blocked(self):
+        result = await self.client(GetBlockedRequest(offset=0, limit=100))
+        users_by_id = {u.id: u for u in result.users}
+        rows = []
+        for pb in result.blocked:
+            if not isinstance(pb.peer_id, PeerUser):
+                continue
+            user = users_by_id.get(pb.peer_id.user_id)
+            if user is None:
+                continue
+            name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "(no name)"
+            username = f"@{user.username}" if user.username else ""
+            rows.append((user.id, name, username))
+        return rows
+
+    def on_refresh_blocked_click(self):
+        if not self.require_connected():
+            return
+
+        def on_done(future):
+            try:
+                rows = future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            for row in self.blocked_tree.get_children():
+                self.blocked_tree.delete(row)
+            self._blocked_user_by_row = {}
+            for i, (user_id, name, username) in enumerate(rows):
+                tag = "odd" if i % 2 else ""
+                row_id = self.blocked_tree.insert("", "end", values=(name, username), tags=(tag,))
+                self._blocked_user_by_row[row_id] = user_id
+            self.log(f"{len(rows)} blocked user(s).")
+
+        self.async_loop.submit(self._do_refresh_blocked(), on_done)
+
+    async def _do_unblock(self, user_ids):
+        for uid in user_ids:
+            await self.client(UnblockRequest(id=uid))
+
+    def on_unblock_click(self):
+        if not self.require_connected():
+            return
+        selected = self.blocked_tree.selection()
+        if not selected:
+            messagebox.showinfo("Nothing selected", "Select one or more users first.")
+            return
+        user_ids = [self._blocked_user_by_row[r] for r in selected if r in self._blocked_user_by_row]
+        if not messagebox.askyesno("Confirm", f"Unblock {len(user_ids)} user(s)?"):
+            return
+
+        def on_done(future):
+            try:
+                future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            self.log(f"Unblocked {len(user_ids)} user(s).")
+            self.on_refresh_blocked_click()
+
+        self.async_loop.submit(self._do_unblock(user_ids), on_done)
+
+    def on_block_click(self):
+        if not self.require_connected():
+            return
+        target = self.block_target_var.get().strip()
+        if not target:
+            messagebox.showerror("Missing info", "Enter a username or phone number.")
+            return
+        if not messagebox.askyesno("Confirm", f"Block '{target}'?"):
+            return
+
+        def on_done(future):
+            try:
+                future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            self.log(f"Blocked {target}.")
+            self.block_target_var.set("")
+            self.on_refresh_blocked_click()
+
+        self.async_loop.submit(self.client(BlockRequest(id=target)), on_done)
 
     # ------------------------------------------------------------------
     # QR Login page handler
@@ -1461,14 +2014,22 @@ class TelegramManagerApp(tk.Tk):
     # ------------------------------------------------------------------
     def on_choose_photo_click(self):
         path = filedialog.askopenfilename(
-            filetypes=[("Images", "*.jpg *.jpeg *.png *.webp")]
+            filetypes=[
+                ("Images and videos", "*.jpg *.jpeg *.png *.webp *.mp4 *.mov *.mkv *.webm"),
+                ("All files", "*.*"),
+            ]
         )
         if path:
             self.photo_path_var.set(path)
 
-    async def _do_post_story(self, photo_path, caption, privacy_rules):
-        uploaded = await self.client.upload_file(photo_path)
-        media = InputMediaUploadedPhoto(file=uploaded)
+    async def _do_post_story(self, media_path, caption, privacy_rules):
+        uploaded = await self.client.upload_file(media_path)
+        video = is_video(media_path)
+        media = get_input_media(
+            uploaded,
+            is_photo=not video,
+            supports_streaming=video,
+        )
         await self.client(
             SendStoryRequest(
                 peer=InputPeerSelf(),
@@ -1482,9 +2043,9 @@ class TelegramManagerApp(tk.Tk):
     def on_post_story_click(self):
         if not self.require_connected():
             return
-        photo_path = self.photo_path_var.get().strip()
-        if not photo_path:
-            messagebox.showerror("Missing image", "Choose an image first.")
+        media_path = self.photo_path_var.get().strip()
+        if not media_path:
+            messagebox.showerror("Missing media", "Choose an image or video first.")
             return
         caption = self.caption_text.get("1.0", "end").strip()
         privacy_rules = (
@@ -1493,7 +2054,7 @@ class TelegramManagerApp(tk.Tk):
             else [InputPrivacyValueAllowContacts()]
         )
         if not messagebox.askyesno(
-            "Confirm", f"Post this photo as a story visible to '{self.privacy_var.get()}'?"
+            "Confirm", f"Post this media as a story visible to '{self.privacy_var.get()}'?"
         ):
             return
 
@@ -1508,7 +2069,7 @@ class TelegramManagerApp(tk.Tk):
             self.log("Story posted.")
 
         self.async_loop.submit(
-            self._do_post_story(photo_path, caption, privacy_rules), on_done
+            self._do_post_story(media_path, caption, privacy_rules), on_done
         )
 
     # ------------------------------------------------------------------
@@ -1536,11 +2097,16 @@ class TelegramManagerApp(tk.Tk):
                 return
             self.first_name_var.set(me.first_name or "")
             self.last_name_var.set(me.last_name or "")
+            self.username_var.set(me.username or "")
             self.bio_text.delete("1.0", "end")
             self.bio_text.insert("1.0", about)
             self.log("Profile loaded.")
 
         self.async_loop.submit(self._do_load_profile(), on_done)
+
+    async def _do_save_profile(self, first_name, last_name, about, username):
+        await self.client(UpdateProfileRequest(first_name=first_name, last_name=last_name, about=about))
+        await self.client(UpdateUsernameRequest(username=username))
 
     def on_save_profile_click(self):
         if not self.require_connected():
@@ -1548,6 +2114,7 @@ class TelegramManagerApp(tk.Tk):
         first_name = self.first_name_var.get().strip()
         last_name = self.last_name_var.get().strip()
         about = self.bio_text.get("1.0", "end").strip()
+        username = self.username_var.get().strip().lstrip("@")
 
         def on_done(future):
             try:
@@ -1558,11 +2125,58 @@ class TelegramManagerApp(tk.Tk):
             self.log("Profile updated.")
 
         self.async_loop.submit(
-            self.client(
-                UpdateProfileRequest(first_name=first_name, last_name=last_name, about=about)
-            ),
-            on_done,
+            self._do_save_profile(first_name, last_name, about, username), on_done
         )
+
+    def on_upload_profile_photo_click(self):
+        if not self.require_connected():
+            return
+        path = filedialog.askopenfilename(
+            filetypes=[("Images", "*.jpg *.jpeg *.png *.webp"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+        if not messagebox.askyesno("Confirm", "Set this image as your new profile photo?"):
+            return
+        self.log("Uploading new profile photo...")
+
+        def on_done(future):
+            try:
+                future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            self.log("Profile photo updated.")
+
+        self.async_loop.submit(self._do_upload_profile_photo(path), on_done)
+
+    async def _do_upload_profile_photo(self, path):
+        uploaded = await self.client.upload_file(path)
+        await self.client(UploadProfilePhotoRequest(file=uploaded))
+
+    def on_remove_profile_photo_click(self):
+        if not self.require_connected():
+            return
+        if not messagebox.askyesno("Confirm", "Remove your current profile photo?"):
+            return
+
+        def on_done(future):
+            try:
+                removed = future.result()
+            except Exception as e:
+                self.ui_queue.put(("error", str(e)))
+                return
+            self.log("Profile photo removed." if removed else "You don't have a profile photo set.")
+
+        self.async_loop.submit(self._do_remove_profile_photo(), on_done)
+
+    async def _do_remove_profile_photo(self):
+        result = await self.client(GetUserPhotosRequest(user_id="me", offset=0, max_id=0, limit=1))
+        if not result.photos:
+            return False
+        input_photo = get_input_photo(result.photos[0])
+        await self.client(DeletePhotosRequest(id=[input_photo]))
+        return True
 
 
 if __name__ == "__main__":
