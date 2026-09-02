@@ -283,13 +283,14 @@ class RoundedButton(tk.Canvas):
     'secondary'."""
 
     def __init__(self, parent, text, command=None, style="primary",
-                 width=None, height=38, radius=10, font=None):
+                 width=None, height=38, radius=None, font=None):
         bg = parent["bg"]
         super().__init__(parent, height=height, bg=bg, highlightthickness=0,
                           bd=0, cursor="hand2")
         self.command = command
         self.style = style
-        self.radius = radius
+        # Fully rounded ("pill") by default, matching Telegram's own buttons.
+        self.radius = radius if radius is not None else height // 2
         self.font = font or (FONT_FAMILY, 10, "bold")
         self.text = text
         self._enabled = True
@@ -437,48 +438,151 @@ class StatusPill(tk.Canvas):
         self.create_text(32, h / 2, text=self.text, fill=COLOR_TEXT_PRIMARY, font=self._font, anchor="w")
 
 
-def styled_entry(parent, textvariable, width=30, show=None):
-    entry = tk.Entry(
-        parent, textvariable=textvariable, width=width, show=show,
-        bg=COLOR_INPUT_BG, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_TEXT_PRIMARY,
-        relief="flat", font=(FONT_FAMILY, 10),
-        highlightthickness=1, highlightbackground=COLOR_CARD_BORDER, highlightcolor=COLOR_ACCENT,
-    )
-    return entry
+def _focus_ring_color(focused):
+    return COLOR_ACCENT if focused else COLOR_CARD_BORDER
 
 
-def styled_secret_entry(parent, textvariable, width=30):
-    """A masked entry with a 'Show'/'Hide' toggle - for values that are
-    pasted rather than typed (like the API Hash), where a stray character
-    from a bad copy/paste is otherwise invisible until Telegram rejects it."""
-    container = tk.Frame(parent, bg=parent["bg"])
-    entry = styled_entry(container, textvariable, width=width, show="*")
-    entry.pack(side="left")
-    toggle_var = tk.StringVar(value="Show")
-    toggle = tk.Label(
-        container, textvariable=toggle_var, bg=parent["bg"], fg=COLOR_ACCENT,
-        font=(FONT_FAMILY, 9), cursor="hand2",
-    )
-    toggle.pack(side="left", padx=(8, 0))
+class TelegramInput(tk.Frame):
+    """A labeled text field styled after Telegram Desktop's own settings
+    fields: a small caption above a rounded, inset box that lights up
+    accent-blue on focus. `show=True` adds a Telegram-style eye toggle for
+    values that are pasted rather than typed (like the API Hash), so a bad
+    paste is visible before it ever reaches Telegram's servers."""
 
-    def on_toggle(event=None):
-        if entry.cget("show") == "*":
-            entry.configure(show="")
-            toggle_var.set("Hide")
+    def __init__(self, parent, label, textvariable, show=False, width=280, height=40, radius=10, font=None):
+        super().__init__(parent, bg=parent["bg"])
+        self._radius = radius
+        self._focused = False
+        self._masked = show
+        self._width = width
+        self._height = height
+
+        tk.Label(
+            self, text=label, bg=parent["bg"], fg=COLOR_TEXT_SECONDARY, font=(FONT_FAMILY, 9),
+        ).pack(side="top", anchor="w", pady=(0, 4))
+
+        self.canvas = tk.Canvas(self, width=width, height=height, bg=parent["bg"], highlightthickness=0, bd=0)
+        self.canvas.pack(side="top", fill="x")
+
+        self.entry = tk.Entry(
+            self.canvas, textvariable=textvariable, show=("*" if self._masked else ""),
+            bg=COLOR_INPUT_BG, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_TEXT_PRIMARY,
+            relief="flat", font=font or (FONT_FAMILY, 10), highlightthickness=0, bd=0,
+        )
+        self._entry_window = self.canvas.create_window(14, height // 2, window=self.entry, anchor="w")
+        self.entry.bind("<FocusIn>", lambda e: self._set_focus(True))
+        self.entry.bind("<FocusOut>", lambda e: self._set_focus(False))
+
+        self._toggle_id = None
+        if self._masked:
+            self._toggle_id = self.canvas.create_text(
+                width - 14, height // 2, text="Show", fill=COLOR_ACCENT, font=(FONT_FAMILY, 9), anchor="e",
+            )
+            self.canvas.tag_bind(self._toggle_id, "<Button-1>", self._toggle_mask)
+            self.canvas.tag_bind(self._toggle_id, "<Enter>", lambda e: self.canvas.configure(cursor="hand2"))
+            self.canvas.tag_bind(self._toggle_id, "<Leave>", lambda e: self.canvas.configure(cursor="arrow"))
+
+        self.canvas.bind("<Configure>", lambda e: self._redraw())
+        self._redraw()
+
+    def _toggle_mask(self, event=None):
+        if self.entry.cget("show") == "*":
+            self.entry.configure(show="")
+            self.canvas.itemconfig(self._toggle_id, text="Hide")
         else:
-            entry.configure(show="*")
-            toggle_var.set("Show")
+            self.entry.configure(show="*")
+            self.canvas.itemconfig(self._toggle_id, text="Show")
 
-    toggle.bind("<Button-1>", on_toggle)
-    return container
+    def _set_focus(self, focused):
+        self._focused = focused
+        self._redraw()
+
+    def _redraw(self):
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if w < 4 or h < 4:
+            w, h = self._width, self._height
+        self.canvas.delete("box")
+        round_rectangle(
+            self.canvas, 1, 1, w - 1, h - 1, radius=self._radius,
+            fill=COLOR_INPUT_BG, outline=_focus_ring_color(self._focused),
+            width=1.6 if self._focused else 1.2, tags="box",
+        )
+        self.canvas.tag_lower("box")
+        right_margin = 40 if self._masked else 14
+        self.canvas.coords(self._entry_window, 14, h / 2)
+        self.canvas.itemconfig(self._entry_window, width=max(20, w - 14 - right_margin))
+        if self._toggle_id:
+            self.canvas.coords(self._toggle_id, w - 14, h / 2)
 
 
-def styled_text(parent, height, width, bg=COLOR_INPUT_BG, fg=COLOR_TEXT_PRIMARY, font=None):
-    return tk.Text(
-        parent, height=height, width=width, bg=bg, fg=fg, insertbackground=fg,
-        relief="flat", wrap="word", font=font or (FONT_FAMILY, 10),
-        highlightthickness=1, highlightbackground=COLOR_CARD_BORDER, highlightcolor=COLOR_ACCENT,
-    )
+class TelegramTextArea(tk.Frame):
+    """A multi-line field with the same rounded, focus-lit box as
+    TelegramInput - for longer text like a bio or story caption."""
+
+    def __init__(self, parent, label, height=4, width=40, font=None, radius=10):
+        super().__init__(parent, bg=parent["bg"])
+        self._radius = radius
+        self._focused = False
+
+        tk.Label(
+            self, text=label, bg=parent["bg"], fg=COLOR_TEXT_SECONDARY, font=(FONT_FAMILY, 9),
+        ).pack(side="top", anchor="w", pady=(0, 4))
+
+        box = tk.Frame(self, bg=parent["bg"])
+        box.pack(side="top", fill="both", expand=True)
+        self.canvas = tk.Canvas(box, bg=parent["bg"], highlightthickness=0, bd=0)
+        self.canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        self.text = tk.Text(
+            box, height=height, width=width, bg=COLOR_INPUT_BG, fg=COLOR_TEXT_PRIMARY,
+            insertbackground=COLOR_TEXT_PRIMARY, relief="flat", wrap="word",
+            font=font or (FONT_FAMILY, 10), highlightthickness=0, bd=0, padx=10, pady=8,
+        )
+        self.text.pack(fill="both", expand=True, padx=2, pady=2)
+        self.text.bind("<FocusIn>", lambda e: self._set_focus(True))
+        self.text.bind("<FocusOut>", lambda e: self._set_focus(False))
+        box.bind("<Configure>", lambda e: self._redraw())
+        self._redraw()
+
+    def _set_focus(self, focused):
+        self._focused = focused
+        self._redraw()
+
+    def _redraw(self):
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if w < 4 or h < 4:
+            return
+        self.canvas.delete("box")
+        round_rectangle(
+            self.canvas, 1, 1, w - 1, h - 1, radius=self._radius,
+            fill=COLOR_INPUT_BG, outline=_focus_ring_color(self._focused),
+            width=1.6 if self._focused else 1.2, tags="box",
+        )
+
+    def get(self, *args, **kwargs):
+        return self.text.get(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        return self.text.delete(*args, **kwargs)
+
+    def insert(self, *args, **kwargs):
+        return self.text.insert(*args, **kwargs)
+
+
+class TelegramCombobox(tk.Frame):
+    """A labeled dropdown matching TelegramInput's caption-above-box style,
+    used for the Everyone / My Contacts / Nobody style choices."""
+
+    def __init__(self, parent, label, textvariable, values, width=16):
+        super().__init__(parent, bg=parent["bg"])
+        tk.Label(
+            self, text=label, bg=parent["bg"], fg=COLOR_TEXT_SECONDARY, font=(FONT_FAMILY, 9),
+        ).pack(side="top", anchor="w", pady=(0, 4))
+        self.combobox = ttk.Combobox(
+            self, textvariable=textvariable, values=values, state="readonly", width=width,
+        )
+        self.combobox.pack(side="top", anchor="w", ipady=5)
 
 
 def card_label(parent, text, secondary=True, bold=False, size=10):
@@ -900,29 +1004,30 @@ class TelegramManagerApp(tk.Tk):
 
         form_card = Card(page)
         form_card.pack(side="top", fill="x")
-        card_label(form_card.body, "Enter new credentials (replaces any saved ones)", secondary=False, bold=True).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
+        card_label(form_card.body, "Enter new credentials (replaces any saved ones)", secondary=False, bold=True).pack(
+            side="top", anchor="w", pady=(0, 14)
         )
 
-        card_label(form_card.body, "API ID").grid(row=1, column=0, sticky="e", padx=(0, 10), pady=6)
-        styled_entry(form_card.body, self.api_id_var, width=36).grid(row=1, column=1, sticky="w", pady=6)
-
-        card_label(form_card.body, "API Hash").grid(row=2, column=0, sticky="e", padx=(0, 10), pady=6)
-        styled_secret_entry(form_card.body, self.api_hash_var, width=32).grid(row=2, column=1, sticky="w", pady=6)
-
-        card_label(form_card.body, "Phone (+countrycode...)").grid(row=3, column=0, sticky="e", padx=(0, 10), pady=6)
-        styled_entry(form_card.body, self.phone_var, width=36).grid(row=3, column=1, sticky="w", pady=6)
-
-        card_label(form_card.body, "Session file name").grid(row=4, column=0, sticky="e", padx=(0, 10), pady=6)
-        styled_entry(form_card.body, self.session_var, width=36).grid(row=4, column=1, sticky="w", pady=6)
+        TelegramInput(form_card.body, "API ID", self.api_id_var, width=320).pack(
+            side="top", anchor="w", pady=(0, 12)
+        )
+        TelegramInput(form_card.body, "API Hash", self.api_hash_var, show=True, width=320).pack(
+            side="top", anchor="w", pady=(0, 12)
+        )
+        TelegramInput(form_card.body, "Phone (+countrycode...)", self.phone_var, width=320).pack(
+            side="top", anchor="w", pady=(0, 12)
+        )
+        TelegramInput(form_card.body, "Session file name", self.session_var, width=320).pack(
+            side="top", anchor="w", pady=(0, 4)
+        )
 
         tk.Label(
             form_card.body, text="Don't have an API ID/Hash yet? See the 'How To' page.",
             bg=COLOR_CARD, fg=COLOR_TEXT_MUTED, font=(FONT_FAMILY, 9),
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 14))
+        ).pack(side="top", anchor="w", pady=(4, 14))
 
         btn_row = tk.Frame(form_card.body, bg=COLOR_CARD)
-        btn_row.grid(row=6, column=0, columnspan=2, sticky="w")
+        btn_row.pack(side="top", anchor="w")
         RoundedButton(btn_row, "Save & Connect", command=self.on_connect_click).pack(side="left", padx=(0, 10))
         RoundedButton(btn_row, "Disconnect", command=self.on_disconnect_click, style="secondary").pack(
             side="left", padx=(0, 10)
@@ -936,26 +1041,18 @@ class TelegramManagerApp(tk.Tk):
         form_card.pack(side="top", fill="x", pady=(0, 16))
 
         from_row = tk.Frame(form_card.body, bg=COLOR_CARD)
-        from_row.pack(side="top", fill="x", pady=(0, 10))
-        date_col1 = tk.Frame(from_row, bg=COLOR_CARD)
-        date_col1.pack(side="left", padx=(0, 14))
-        card_label(date_col1, "From date (YYYY-MM-DD)").pack(side="top", anchor="w", pady=(0, 4))
-        styled_entry(date_col1, self.from_date_var, width=16).pack(side="top", anchor="w")
-        time_col1 = tk.Frame(from_row, bg=COLOR_CARD)
-        time_col1.pack(side="left")
-        card_label(time_col1, "From time (HH:MM)").pack(side="top", anchor="w", pady=(0, 4))
-        styled_entry(time_col1, self.from_time_var, width=8).pack(side="top", anchor="w")
+        from_row.pack(side="top", fill="x", pady=(0, 14))
+        TelegramInput(from_row, "From date (YYYY-MM-DD)", self.from_date_var, width=160).pack(
+            side="left", padx=(0, 14)
+        )
+        TelegramInput(from_row, "From time (HH:MM)", self.from_time_var, width=100).pack(side="left")
 
         to_row = tk.Frame(form_card.body, bg=COLOR_CARD)
         to_row.pack(side="top", fill="x", pady=(0, 14))
-        date_col2 = tk.Frame(to_row, bg=COLOR_CARD)
-        date_col2.pack(side="left", padx=(0, 14))
-        card_label(date_col2, "To date (YYYY-MM-DD)").pack(side="top", anchor="w", pady=(0, 4))
-        styled_entry(date_col2, self.to_date_var, width=16).pack(side="top", anchor="w")
-        time_col2 = tk.Frame(to_row, bg=COLOR_CARD)
-        time_col2.pack(side="left")
-        card_label(time_col2, "To time (HH:MM)").pack(side="top", anchor="w", pady=(0, 4))
-        styled_entry(time_col2, self.to_time_var, width=8).pack(side="top", anchor="w")
+        TelegramInput(to_row, "To date (YYYY-MM-DD)", self.to_date_var, width=160).pack(
+            side="left", padx=(0, 14)
+        )
+        TelegramInput(to_row, "To time (HH:MM)", self.to_time_var, width=100).pack(side="left")
 
         btn_row = tk.Frame(form_card.body, bg=COLOR_CARD)
         btn_row.pack(side="top", fill="x")
@@ -1009,29 +1106,30 @@ class TelegramManagerApp(tk.Tk):
 
         pw_card = Card(page)
         pw_card.pack(side="top", fill="x", pady=(0, 16))
-        card_label(pw_card.body, "Two-Step Verification (2FA)", secondary=False, bold=True).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
-        )
-        card_label(pw_card.body, "Current password (blank if none set)").grid(
-            row=1, column=0, sticky="e", padx=(0, 10), pady=6
+        card_label(pw_card.body, "Two-Step Verification (2FA)", secondary=False, bold=True).pack(
+            side="top", anchor="w", pady=(0, 14)
         )
         self.current_pw_var = tk.StringVar()
-        styled_entry(pw_card.body, self.current_pw_var, width=30, show="*").grid(row=1, column=1, sticky="w", pady=6)
-
-        card_label(pw_card.body, "New password (blank to remove 2FA)").grid(row=2, column=0, sticky="e", padx=(0, 10), pady=6)
         self.new_pw_var = tk.StringVar()
-        styled_entry(pw_card.body, self.new_pw_var, width=30, show="*").grid(row=2, column=1, sticky="w", pady=6)
-
-        card_label(pw_card.body, "Hint (optional)").grid(row=3, column=0, sticky="e", padx=(0, 10), pady=6)
         self.pw_hint_var = tk.StringVar()
-        styled_entry(pw_card.body, self.pw_hint_var, width=30).grid(row=3, column=1, sticky="w", pady=6)
-
-        card_label(pw_card.body, "Recovery email (optional)").grid(row=4, column=0, sticky="e", padx=(0, 10), pady=6)
         self.pw_email_var = tk.StringVar()
-        styled_entry(pw_card.body, self.pw_email_var, width=30).grid(row=4, column=1, sticky="w", pady=6)
+
+        pw_row1 = tk.Frame(pw_card.body, bg=COLOR_CARD)
+        pw_row1.pack(side="top", fill="x", pady=(0, 12))
+        TelegramInput(
+            pw_row1, "Current password (blank if none set)", self.current_pw_var, show=True, width=280
+        ).pack(side="left", padx=(0, 14))
+        TelegramInput(
+            pw_row1, "New password (blank to remove 2FA)", self.new_pw_var, show=True, width=280
+        ).pack(side="left")
+
+        pw_row2 = tk.Frame(pw_card.body, bg=COLOR_CARD)
+        pw_row2.pack(side="top", fill="x", pady=(0, 14))
+        TelegramInput(pw_row2, "Hint (optional)", self.pw_hint_var, width=280).pack(side="left", padx=(0, 14))
+        TelegramInput(pw_row2, "Recovery email (optional)", self.pw_email_var, width=280).pack(side="left")
 
         pw_btn_row = tk.Frame(pw_card.body, bg=COLOR_CARD)
-        pw_btn_row.grid(row=5, column=0, columnspan=2, pady=(12, 0))
+        pw_btn_row.pack(side="top", anchor="w")
         RoundedButton(pw_btn_row, "Set / Change 2FA Password", command=self.on_set_2fa_click).pack(
             side="left", padx=(0, 10)
         )
@@ -1089,23 +1187,23 @@ class TelegramManagerApp(tk.Tk):
     def _build_privacy_page(self, page):
         card = Card(page)
         card.pack(side="top", fill="x")
-        card_label(card.body, "Who can see or contact you", secondary=False, bold=True).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 14)
+        card_label(card.body, "Who can see or contact you", secondary=False, bold=True).pack(
+            side="top", anchor="w", pady=(0, 14)
         )
 
         self.privacy_vars = {}
-        row = 1
-        for key_id, label, _key_cls in PRIVACY_FIELDS:
-            card_label(card.body, label).grid(row=row, column=0, sticky="e", padx=(0, 10), pady=6)
+        row_frame = None
+        for i, (key_id, label, _key_cls) in enumerate(PRIVACY_FIELDS):
+            if i % 2 == 0:
+                row_frame = tk.Frame(card.body, bg=COLOR_CARD)
+                row_frame.pack(side="top", fill="x", pady=(0, 14))
             var = tk.StringVar(value="Everyone")
             self.privacy_vars[key_id] = var
-            ttk.Combobox(
-                card.body, textvariable=var, values=PRIVACY_OPTIONS, state="readonly", width=16
-            ).grid(row=row, column=1, sticky="w", pady=6)
-            row += 1
+            combo = TelegramCombobox(row_frame, label, var, PRIVACY_OPTIONS, width=16)
+            combo.pack(side="left", padx=(0, 14) if i % 2 == 0 else 0)
 
         btn_row = tk.Frame(card.body, bg=COLOR_CARD)
-        btn_row.grid(row=row, column=0, columnspan=2, sticky="w", pady=(14, 0))
+        btn_row.pack(side="top", anchor="w", pady=(4, 0))
         RoundedButton(
             btn_row, "Load Current Settings", command=self.on_load_privacy_click, style="secondary"
         ).pack(side="left", padx=(0, 10))
@@ -1134,16 +1232,15 @@ class TelegramManagerApp(tk.Tk):
 
         add_card = Card(page)
         add_card.pack(side="top", fill="x")
-        card_label(add_card.body, "Block someone", secondary=False, bold=True).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 10)
-        )
-        card_label(add_card.body, "Username, or phone of an existing contact").grid(
-            row=1, column=0, sticky="e", padx=(0, 10), pady=6
+        card_label(add_card.body, "Block someone", secondary=False, bold=True).pack(
+            side="top", anchor="w", pady=(0, 12)
         )
         self.block_target_var = tk.StringVar()
-        styled_entry(add_card.body, self.block_target_var, width=30).grid(row=1, column=1, sticky="w", pady=6)
-        RoundedButton(add_card.body, "Block", command=self.on_block_click, style="danger-outline").grid(
-            row=2, column=0, columnspan=2, sticky="w", pady=(10, 0)
+        TelegramInput(
+            add_card.body, "Username, or phone of an existing contact", self.block_target_var, width=320
+        ).pack(side="top", anchor="w", pady=(0, 12))
+        RoundedButton(add_card.body, "Block", command=self.on_block_click, style="danger-outline").pack(
+            side="top", anchor="w"
         )
 
     def _build_qr_page(self, page):
@@ -1174,16 +1271,12 @@ class TelegramManagerApp(tk.Tk):
             side="left", padx=10
         )
 
-        card_label(card.body, "Caption (optional)").pack(side="top", anchor="w", pady=(14, 6))
-        self.caption_text = styled_text(card.body, height=4, width=80)
-        self.caption_text.pack(side="top", anchor="w")
+        self.caption_text = TelegramTextArea(card.body, "Caption (optional)", height=4, width=80)
+        self.caption_text.pack(side="top", anchor="w", pady=(14, 14))
 
-        row2 = tk.Frame(card.body, bg=COLOR_CARD)
-        row2.pack(side="top", fill="x", pady=14)
-        card_label(row2, "Visible to").pack(side="left", padx=(0, 10))
-        ttk.Combobox(
-            row2, textvariable=self.privacy_var, values=["Everyone", "Contacts"], state="readonly", width=14
-        ).pack(side="left")
+        TelegramCombobox(card.body, "Visible to", self.privacy_var, ["Everyone", "Contacts"], width=14).pack(
+            side="top", anchor="w", pady=(0, 14)
+        )
 
         RoundedButton(card.body, "Post Story", command=self.on_post_story_click).pack(side="top", anchor="w")
 
@@ -1191,29 +1284,27 @@ class TelegramManagerApp(tk.Tk):
         card = Card(page)
         card.pack(side="top", fill="x", pady=(0, 16))
 
-        RoundedButton(card.body, "Load Current", command=self.on_load_profile_click, style="secondary").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 16)
+        RoundedButton(card.body, "Load Current", command=self.on_load_profile_click, style="secondary").pack(
+            side="top", anchor="w", pady=(0, 16)
         )
 
         self.first_name_var = tk.StringVar()
         self.last_name_var = tk.StringVar()
         self.username_var = tk.StringVar()
 
-        card_label(card.body, "First name").grid(row=1, column=0, sticky="e", padx=(0, 10), pady=6)
-        styled_entry(card.body, self.first_name_var, width=36).grid(row=1, column=1, sticky="w", pady=6)
-        card_label(card.body, "Last name").grid(row=2, column=0, sticky="e", padx=(0, 10), pady=6)
-        styled_entry(card.body, self.last_name_var, width=36).grid(row=2, column=1, sticky="w", pady=6)
-        card_label(card.body, "Username (without @, blank to remove)").grid(
-            row=3, column=0, sticky="e", padx=(0, 10), pady=6
-        )
-        styled_entry(card.body, self.username_var, width=36).grid(row=3, column=1, sticky="w", pady=6)
-        card_label(card.body, "Bio").grid(row=4, column=0, sticky="ne", padx=(0, 10), pady=6)
-        self.bio_text = styled_text(card.body, height=4, width=40)
-        self.bio_text.grid(row=4, column=1, sticky="w", pady=6)
+        name_row = tk.Frame(card.body, bg=COLOR_CARD)
+        name_row.pack(side="top", fill="x", pady=(0, 12))
+        TelegramInput(name_row, "First name", self.first_name_var, width=200).pack(side="left", padx=(0, 14))
+        TelegramInput(name_row, "Last name", self.last_name_var, width=200).pack(side="left")
 
-        RoundedButton(card.body, "Save Changes", command=self.on_save_profile_click).grid(
-            row=5, column=0, columnspan=2, pady=(14, 0)
-        )
+        TelegramInput(
+            card.body, "Username (without @, blank to remove)", self.username_var, width=320
+        ).pack(side="top", anchor="w", pady=(0, 12))
+
+        self.bio_text = TelegramTextArea(card.body, "Bio", height=4, width=40)
+        self.bio_text.pack(side="top", anchor="w", pady=(0, 16))
+
+        RoundedButton(card.body, "Save Changes", command=self.on_save_profile_click).pack(side="top", anchor="w")
 
         photo_card = Card(page)
         photo_card.pack(side="top", fill="x")
