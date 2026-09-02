@@ -95,6 +95,24 @@ KEYRING_USERNAME = "credentials"
 # a clear message instead of Telegram's opaque "SendCodeRequest" error.
 API_HASH_PATTERN = re.compile(r"^[0-9a-fA-F]{32}$")
 
+
+def diagnose_api_hash(value):
+    """Explain exactly what's wrong with a rejected API Hash, so a mixed-case
+    mess from a password manager's auto-fill/auto-type (or an old clipboard
+    entry) landing in this field reads as "wrong value", not "typo"."""
+    bad_chars = sorted(set(ch for ch in value if ch not in "0123456789abcdefABCDEF"))
+    if bad_chars:
+        shown = ", ".join(repr(c) for c in bad_chars[:6])
+        return (
+            f"It contains character(s) that never appear in a hex string ({shown}). "
+            "That usually means something other than your API Hash landed in this "
+            "field - a password manager's auto-fill/auto-type, or an old clipboard "
+            "entry - rather than a typo in the real value."
+        )
+    if len(value) != 32:
+        return f"It's {len(value)} character(s) long - a real API Hash is always exactly 32."
+    return "It doesn't match the value on my.telegram.org - re-copy it from there."
+
 def resource_path(*parts):
     base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, *parts)
@@ -1453,9 +1471,12 @@ class TelegramManagerApp(tk.Tk):
             messagebox.showerror(
                 "Invalid API Hash",
                 "API Hash should be exactly the 32-character hexadecimal string "
-                "shown as 'App api_hash' on my.telegram.org - use the 'Show' "
-                "toggle next to the field to check what you actually typed or "
-                "pasted, then try again.",
+                "shown as 'App api_hash' on my.telegram.org.\n\n"
+                f"{diagnose_api_hash(api_hash)}\n\n"
+                "Clear the field, copy the value fresh from my.telegram.org, and "
+                "paste it directly (not via a password manager's fill/generate "
+                "shortcut) - then use 'Show' to confirm it landed correctly "
+                "before saving.",
             )
             return
 
