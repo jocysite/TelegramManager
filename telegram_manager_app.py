@@ -2353,6 +2353,25 @@ class TelegramManagerApp(tk.Tk):
         return True
 
 
+def _enable_windows_dpi_awareness():
+    # Without this, Windows treats the app as DPI-unaware and upscales the
+    # whole window as a bitmap on any display scaled above 100% (125%, 150%,
+    # ...) - that bitmap stretch is exactly what makes every button, label,
+    # and line of text look soft/blurry instead of crisp.
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+    except Exception:
+        try:
+            import ctypes
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
+    _enable_windows_dpi_awareness()
     app = TelegramManagerApp()
     app.mainloop()
