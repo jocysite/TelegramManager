@@ -634,12 +634,14 @@ anyone else's account.
    - First time: enter API ID, API Hash, and your phone number (with
      country code, e.g. +15551234567) in the form, then click
      "Save & Connect".
-   - API Hash is masked by default since it's tied to your account, but
-     it's pasted rather than typed - use the "Show" link next to it to
-     confirm you copied the full, correct 32-character value from
-     my.telegram.org before connecting. "Could not connect: the
-     api_id/api_hash combination is invalid" almost always means a
-     copy/paste mistake in this field.
+   - API Hash is shown in plain text on purpose (same as on
+     my.telegram.org) so you can visually verify what you pasted - it's
+     deliberately not masked like a password, since masking it would make
+     Windows' own password-autofill offer to fill it with an unrelated
+     saved credential instead of what you typed. "Could not connect: the
+     api_id/api_hash combination is invalid" almost always means the
+     wrong value ended up in this field - re-copy it fresh from
+     my.telegram.org if that happens.
    - Your credentials are encrypted and saved in Windows Credential
      Manager (protected by Windows DPAPI) - not as a plain text file.
      Only your own Windows user account, on this same PC, can decrypt
@@ -1029,7 +1031,12 @@ class TelegramManagerApp(tk.Tk):
         TelegramInput(form_card.body, "API ID", self.api_id_var, width=360).pack(
             side="top", fill="x", pady=(0, 12)
         )
-        TelegramInput(form_card.body, "API Hash", self.api_hash_var, show=True, width=360).pack(
+        # Deliberately not masked: masking sets the native ES_PASSWORD style
+        # on Windows, which makes the OS treat this as a login password field
+        # and offer to autofill it with an unrelated saved credential - the
+        # likely cause of garbled values silently replacing what was typed.
+        # my.telegram.org shows this value in plaintext for the same reason.
+        TelegramInput(form_card.body, "API Hash", self.api_hash_var, width=360).pack(
             side="top", fill="x", pady=(0, 12)
         )
         TelegramInput(form_card.body, "Phone (+countrycode...)", self.phone_var, width=360).pack(
@@ -1475,8 +1482,8 @@ class TelegramManagerApp(tk.Tk):
                 f"{diagnose_api_hash(api_hash)}\n\n"
                 "Clear the field, copy the value fresh from my.telegram.org, and "
                 "paste it directly (not via a password manager's fill/generate "
-                "shortcut) - then use 'Show' to confirm it landed correctly "
-                "before saving.",
+                "shortcut) - the field shows plain text so you can check it "
+                "landed correctly before saving.",
             )
             return
 
