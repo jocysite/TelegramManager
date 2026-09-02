@@ -22,7 +22,10 @@ tasks Telegram itself scatters across menus: cleaning up old messages in bulk,
 auditing and killing sessions you don't recognize, locking down your privacy
 settings, and more. It talks directly to Telegram's own API — the same one the
 official apps use — so nothing you do ever passes through a server we operate,
-because we don't operate one.
+because we don't operate one. The interface is styled after Telegram Desktop's
+own settings screens — rounded, focus-lit fields and the same dark theme — so
+it feels like a natural extension of Telegram rather than a third-party tool
+bolted on top.
 
 ## Table of contents
 
@@ -116,6 +119,7 @@ single credential.
 <p align="center">
   <img src="assets/screenshot_setup.png" width="420" alt="Setup page"/>
   <img src="assets/screenshot_delete.png" width="420" alt="Delete Messages page"/>
+  <img src="assets/screenshot_privacy.png" width="420" alt="Privacy page"/>
 </p>
 
 ## Installation
