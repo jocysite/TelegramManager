@@ -15,6 +15,7 @@ Features (single window, sidebar navigation):
     - Post Story: publish an image or video to your Telegram Story
     - Profile: edit your name/username/bio and profile photo
     - How To: usage instructions and where to get API credentials
+    - About: app version and developer contact info
 
 Works for ANY Telegram account - enter your own credentials in the Setup
 page. See the "How To" page inside the app for full instructions.
@@ -38,6 +39,7 @@ import sys
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
+import webbrowser
 from tkinter import ttk, messagebox, filedialog, simpledialog, scrolledtext
 
 import keyring
@@ -83,6 +85,11 @@ from telethon.tl.types import (
 )
 from telethon.tl.types.auth import LoginTokenMigrateTo, LoginTokenSuccess
 from telethon.utils import get_input_media, get_input_photo, is_video
+
+APP_VERSION = "1.0.0"
+APP_AUTHOR = "Yosef Mulatu"
+APP_AUTHOR_EMAIL = "josephmulatu1@gmail.com"
+APP_AUTHOR_TELEGRAM = "jocyj"
 
 # Credentials are stored via the OS's secure credential vault (Windows
 # Credential Manager, protected by DPAPI) instead of a plain file - only
@@ -208,6 +215,7 @@ NAV_ITEMS = [
     ("story", "\U0001F5BC", "Post Story"),
     ("profile", "\U0001F464", "Profile"),
     ("help", "\U0001F4D6", "How To"),
+    ("about", "\U00002139", "About"),
 ]
 
 # Privacy keys exposed on the Privacy page, in the same order Telegram's own
@@ -603,6 +611,17 @@ class TelegramCombobox(tk.Frame):
         self.combobox.pack(side="top", anchor="w", ipady=5)
 
 
+def wrapping_label(parent, text, fg=COLOR_TEXT_SECONDARY, font=None):
+    """A label that wraps to whatever width it's actually given, instead of
+    a hardcoded guess that can be wider than the card and get clipped."""
+    label = tk.Label(
+        parent, text=text, justify="left", bg=parent["bg"], fg=fg,
+        font=font or (FONT_FAMILY, 10),
+    )
+    label.bind("<Configure>", lambda e: label.configure(wraplength=e.width))
+    return label
+
+
 def card_label(parent, text, secondary=True, bold=False, size=10):
     return tk.Label(
         parent, text=text, bg=parent["bg"],
@@ -740,6 +759,12 @@ anyone else's account.
    - Use "Upload New Photo..." to set a new profile photo, or "Remove
      Current Photo" to delete the one Telegram currently shows for you.
 
+10) ABOUT PAGE
+   - Shows the app's version and the developer's contact details.
+     Clicking the email or Telegram link opens your default mail app or
+     Telegram; the small icon beside each one copies it to your
+     clipboard instead.
+
 SAFETY NOTES
    - Deleting messages, terminating sessions, and deleting your account
      are NOT reversible. Always use Preview / review lists before
@@ -757,7 +782,7 @@ SAFETY NOTES
 class TelegramManagerApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Telegram Account Manager")
+        self.title(f"Telegram Account Manager v{APP_VERSION}")
         self.geometry("900x620")
         self.minsize(700, 460)
         self.configure(bg=COLOR_MAIN_BG)
@@ -939,6 +964,7 @@ class TelegramManagerApp(tk.Tk):
             "story": self._build_story_page,
             "profile": self._build_profile_page,
             "help": self._build_help_page,
+            "about": self._build_about_page,
         }
         for key, builder in builders.items():
             page = ScrollableFrame(self.page_container)
@@ -1201,14 +1227,12 @@ class TelegramManagerApp(tk.Tk):
         card_label(danger_card.body, "Danger zone", secondary=False, bold=True).pack(
             side="top", anchor="w", pady=(0, 8)
         )
-        tk.Label(
+        wrapping_label(
             danger_card.body,
-            text=(
-                "Permanently deletes your Telegram account, every message, and removes you "
-                "from all chats, groups, and channels. This cannot be undone."
-            ),
-            bg=COLOR_CARD, fg=COLOR_TEXT_SECONDARY, wraplength=700, justify="left", font=(FONT_FAMILY, 9),
-        ).pack(side="top", anchor="w", pady=(0, 10))
+            "Permanently deletes your Telegram account, every message, and removes you "
+            "from all chats, groups, and channels. This cannot be undone.",
+            font=(FONT_FAMILY, 9),
+        ).pack(side="top", anchor="w", fill="x", pady=(0, 10))
         RoundedButton(
             danger_card.body, "Delete My Account...", command=self.on_delete_account_click, style="danger-outline"
         ).pack(side="top", anchor="w")
@@ -1275,18 +1299,15 @@ class TelegramManagerApp(tk.Tk):
     def _build_qr_page(self, page):
         card = Card(page)
         card.pack(side="top", fill="x")
-        tk.Label(
+        wrapping_label(
             card.body,
-            wraplength=760, justify="left", bg=COLOR_CARD, fg=COLOR_TEXT_SECONDARY, font=(FONT_FAMILY, 10),
-            text=(
-                "Log another device (phone/tablet) into your account without SMS.\n\n"
-                "1. On the new device, open Telegram and tap the QR code icon on the "
-                "phone-number entry screen.\n"
-                "2. Click 'Start Scanning' below - it opens this PC's webcam.\n"
-                "3. Hold the new device's screen up to the camera until it's detected.\n\n"
-                "Requires: pip install opencv-python"
-            ),
-        ).pack(side="top", anchor="w", pady=(0, 16))
+            "Log another device (phone/tablet) into your account without SMS.\n\n"
+            "1. On the new device, open Telegram and tap the QR code icon on the "
+            "phone-number entry screen.\n"
+            "2. Click 'Start Scanning' below - it opens this PC's webcam.\n"
+            "3. Hold the new device's screen up to the camera until it's detected.\n\n"
+            "Requires: pip install opencv-python",
+        ).pack(side="top", anchor="w", fill="x", pady=(0, 16))
         RoundedButton(card.body, "Start Scanning", command=self.on_start_qr_click).pack(side="top", anchor="w")
 
     def _build_story_page(self, page):
@@ -1363,6 +1384,86 @@ class TelegramManagerApp(tk.Tk):
         box.pack(fill="both", expand=True)
         box.insert("1.0", HELP_TEXT)
         box.configure(state="disabled")
+
+    def _build_about_page(self, page):
+        card = Card(page)
+        card.pack(side="top", fill="x", pady=(0, 16))
+
+        header = tk.Frame(card.body, bg=COLOR_CARD)
+        header.pack(side="top", fill="x", pady=(0, 16))
+        logo_path = os.path.join(ASSETS_DIR, "logo_64.png")
+        if os.path.exists(logo_path):
+            self._about_logo_image = tk.PhotoImage(file=logo_path)
+            tk.Label(header, image=self._about_logo_image, bg=COLOR_CARD, bd=0).pack(side="left", padx=(0, 16))
+        title_col = tk.Frame(header, bg=COLOR_CARD)
+        title_col.pack(side="left")
+        tk.Label(
+            title_col, text="Telegram Account Manager", bg=COLOR_CARD, fg=COLOR_TEXT_PRIMARY,
+            font=(FONT_FAMILY, 15, "bold"),
+        ).pack(side="top", anchor="w")
+        tk.Label(
+            title_col, text=f"Version {APP_VERSION}", bg=COLOR_CARD, fg=COLOR_TEXT_SECONDARY,
+            font=(FONT_FAMILY, 10),
+        ).pack(side="top", anchor="w", pady=(2, 0))
+
+        wrapping_label(
+            card.body,
+            "A free, open-source desktop app for managing your own Telegram account - "
+            "deleting old messages in bulk, auditing sessions and connected websites, "
+            "controlling your privacy settings, and more. It talks directly to Telegram's "
+            "own API and never touches anyone else's account.",
+        ).pack(side="top", anchor="w", fill="x")
+
+        dev_card = Card(page)
+        dev_card.pack(side="top", fill="x")
+        card_label(dev_card.body, "Developer", secondary=False, bold=True).pack(
+            side="top", anchor="w", pady=(0, 12)
+        )
+        tk.Label(
+            dev_card.body, text=APP_AUTHOR, bg=COLOR_CARD, fg=COLOR_TEXT_PRIMARY, font=(FONT_FAMILY, 12, "bold"),
+        ).pack(side="top", anchor="w", pady=(0, 14))
+
+        self._build_contact_row(
+            dev_card.body, "Email", APP_AUTHOR_EMAIL,
+            copy_value=APP_AUTHOR_EMAIL, on_open=self.on_open_email_click,
+        )
+        self._build_contact_row(
+            dev_card.body, "Telegram", f"@{APP_AUTHOR_TELEGRAM}",
+            copy_value=f"https://t.me/{APP_AUTHOR_TELEGRAM}", on_open=self.on_open_telegram_click,
+        )
+
+    def _build_contact_row(self, parent, label, display_text, copy_value, on_open):
+        row = tk.Frame(parent, bg=COLOR_CARD)
+        row.pack(side="top", fill="x", pady=6)
+        tk.Label(
+            row, text=label, bg=COLOR_CARD, fg=COLOR_TEXT_SECONDARY, font=(FONT_FAMILY, 10),
+            width=10, anchor="w",
+        ).pack(side="left")
+        link = tk.Label(
+            row, text=display_text, bg=COLOR_CARD, fg=COLOR_ACCENT, font=(FONT_FAMILY, 10, "bold"),
+            cursor="hand2",
+        )
+        link.pack(side="left")
+        link.bind("<Button-1>", lambda e: on_open())
+        copy_btn = tk.Label(
+            row, text="\U0001F4CB", bg=COLOR_CARD, fg=COLOR_TEXT_SECONDARY, font=(FONT_FAMILY, 11),
+            cursor="hand2",
+        )
+        copy_btn.pack(side="left", padx=(10, 0))
+        copy_btn.bind("<Button-1>", lambda e: self.copy_to_clipboard(copy_value, label))
+        copy_btn.bind("<Enter>", lambda e: copy_btn.configure(fg=COLOR_ACCENT))
+        copy_btn.bind("<Leave>", lambda e: copy_btn.configure(fg=COLOR_TEXT_SECONDARY))
+
+    def on_open_email_click(self):
+        webbrowser.open(f"mailto:{APP_AUTHOR_EMAIL}")
+
+    def on_open_telegram_click(self):
+        webbrowser.open(f"https://t.me/{APP_AUTHOR_TELEGRAM}")
+
+    def copy_to_clipboard(self, value, label="Value"):
+        self.clipboard_clear()
+        self.clipboard_append(value)
+        self.log(f"{label} copied to clipboard.")
 
     # ------------------------------------------------------------------
     # cross-thread plumbing

@@ -5,6 +5,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/jocysite/TelegramManager/tags"><img src="https://img.shields.io/github/v/tag/jocysite/TelegramManager?label=version" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform: Windows">
@@ -41,6 +42,7 @@ bolted on top.
 - [Requirements](#requirements)
 - [Contributing](#contributing)
 - [Disclaimer](#disclaimer)
+- [About](#about)
 - [License](#license)
 
 ## Why you can trust it
@@ -260,6 +262,16 @@ TeleManager is an independent, community-built tool and is not affiliated
 with, endorsed by, or sponsored by Telegram FZ-LLC. "Telegram" is a
 trademark of its respective owner. Use of the Telegram API through this app
 is subject to [Telegram's Terms of Service](https://telegram.org/tos).
+
+## About
+
+**TeleManager** is developed and maintained by **Yosef Mulatu**.
+
+- Email: [josephmulatu1@gmail.com](mailto:josephmulatu1@gmail.com)
+- Telegram: [@jocyj](https://t.me/jocyj)
+
+The same contact details, with one-click copy, are available inside the app
+itself on the **About** page.
 
 ## License
 
