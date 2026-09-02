@@ -1008,17 +1008,17 @@ class TelegramManagerApp(tk.Tk):
             side="top", anchor="w", pady=(0, 14)
         )
 
-        TelegramInput(form_card.body, "API ID", self.api_id_var, width=320).pack(
-            side="top", anchor="w", pady=(0, 12)
+        TelegramInput(form_card.body, "API ID", self.api_id_var, width=360).pack(
+            side="top", fill="x", pady=(0, 12)
         )
-        TelegramInput(form_card.body, "API Hash", self.api_hash_var, show=True, width=320).pack(
-            side="top", anchor="w", pady=(0, 12)
+        TelegramInput(form_card.body, "API Hash", self.api_hash_var, show=True, width=360).pack(
+            side="top", fill="x", pady=(0, 12)
         )
-        TelegramInput(form_card.body, "Phone (+countrycode...)", self.phone_var, width=320).pack(
-            side="top", anchor="w", pady=(0, 12)
+        TelegramInput(form_card.body, "Phone (+countrycode...)", self.phone_var, width=360).pack(
+            side="top", fill="x", pady=(0, 12)
         )
-        TelegramInput(form_card.body, "Session file name", self.session_var, width=320).pack(
-            side="top", anchor="w", pady=(0, 4)
+        TelegramInput(form_card.body, "Session file name", self.session_var, width=360).pack(
+            side="top", fill="x", pady=(0, 4)
         )
 
         tk.Label(
@@ -1042,17 +1042,17 @@ class TelegramManagerApp(tk.Tk):
 
         from_row = tk.Frame(form_card.body, bg=COLOR_CARD)
         from_row.pack(side="top", fill="x", pady=(0, 14))
-        TelegramInput(from_row, "From date (YYYY-MM-DD)", self.from_date_var, width=160).pack(
+        TelegramInput(from_row, "From date (YYYY-MM-DD)", self.from_date_var, width=210).pack(
             side="left", padx=(0, 14)
         )
-        TelegramInput(from_row, "From time (HH:MM)", self.from_time_var, width=100).pack(side="left")
+        TelegramInput(from_row, "From time (HH:MM)", self.from_time_var, width=140).pack(side="left")
 
         to_row = tk.Frame(form_card.body, bg=COLOR_CARD)
         to_row.pack(side="top", fill="x", pady=(0, 14))
-        TelegramInput(to_row, "To date (YYYY-MM-DD)", self.to_date_var, width=160).pack(
+        TelegramInput(to_row, "To date (YYYY-MM-DD)", self.to_date_var, width=210).pack(
             side="left", padx=(0, 14)
         )
-        TelegramInput(to_row, "To time (HH:MM)", self.to_time_var, width=100).pack(side="left")
+        TelegramInput(to_row, "To time (HH:MM)", self.to_time_var, width=140).pack(side="left")
 
         btn_row = tk.Frame(form_card.body, bg=COLOR_CARD)
         btn_row.pack(side="top", fill="x")
@@ -1118,15 +1118,19 @@ class TelegramManagerApp(tk.Tk):
         pw_row1.pack(side="top", fill="x", pady=(0, 12))
         TelegramInput(
             pw_row1, "Current password (blank if none set)", self.current_pw_var, show=True, width=280
-        ).pack(side="left", padx=(0, 14))
+        ).pack(side="left", fill="x", expand=True, padx=(0, 14))
         TelegramInput(
             pw_row1, "New password (blank to remove 2FA)", self.new_pw_var, show=True, width=280
-        ).pack(side="left")
+        ).pack(side="left", fill="x", expand=True)
 
         pw_row2 = tk.Frame(pw_card.body, bg=COLOR_CARD)
         pw_row2.pack(side="top", fill="x", pady=(0, 14))
-        TelegramInput(pw_row2, "Hint (optional)", self.pw_hint_var, width=280).pack(side="left", padx=(0, 14))
-        TelegramInput(pw_row2, "Recovery email (optional)", self.pw_email_var, width=280).pack(side="left")
+        TelegramInput(pw_row2, "Hint (optional)", self.pw_hint_var, width=280).pack(
+            side="left", fill="x", expand=True, padx=(0, 14)
+        )
+        TelegramInput(pw_row2, "Recovery email (optional)", self.pw_email_var, width=280).pack(
+            side="left", fill="x", expand=True
+        )
 
         pw_btn_row = tk.Frame(pw_card.body, bg=COLOR_CARD)
         pw_btn_row.pack(side="top", anchor="w")
@@ -1237,8 +1241,8 @@ class TelegramManagerApp(tk.Tk):
         )
         self.block_target_var = tk.StringVar()
         TelegramInput(
-            add_card.body, "Username, or phone of an existing contact", self.block_target_var, width=320
-        ).pack(side="top", anchor="w", pady=(0, 12))
+            add_card.body, "Username, or phone of an existing contact", self.block_target_var, width=360
+        ).pack(side="top", fill="x", pady=(0, 12))
         RoundedButton(add_card.body, "Block", command=self.on_block_click, style="danger-outline").pack(
             side="top", anchor="w"
         )
@@ -1272,7 +1276,7 @@ class TelegramManagerApp(tk.Tk):
         )
 
         self.caption_text = TelegramTextArea(card.body, "Caption (optional)", height=4, width=80)
-        self.caption_text.pack(side="top", anchor="w", pady=(14, 14))
+        self.caption_text.pack(side="top", fill="x", pady=(14, 14))
 
         TelegramCombobox(card.body, "Visible to", self.privacy_var, ["Everyone", "Contacts"], width=14).pack(
             side="top", anchor="w", pady=(0, 14)
@@ -1294,15 +1298,19 @@ class TelegramManagerApp(tk.Tk):
 
         name_row = tk.Frame(card.body, bg=COLOR_CARD)
         name_row.pack(side="top", fill="x", pady=(0, 12))
-        TelegramInput(name_row, "First name", self.first_name_var, width=200).pack(side="left", padx=(0, 14))
-        TelegramInput(name_row, "Last name", self.last_name_var, width=200).pack(side="left")
+        TelegramInput(name_row, "First name", self.first_name_var, width=220).pack(
+            side="left", fill="x", expand=True, padx=(0, 14)
+        )
+        TelegramInput(name_row, "Last name", self.last_name_var, width=220).pack(
+            side="left", fill="x", expand=True
+        )
 
         TelegramInput(
-            card.body, "Username (without @, blank to remove)", self.username_var, width=320
-        ).pack(side="top", anchor="w", pady=(0, 12))
+            card.body, "Username (without @, blank to remove)", self.username_var, width=360
+        ).pack(side="top", fill="x", pady=(0, 12))
 
-        self.bio_text = TelegramTextArea(card.body, "Bio", height=4, width=40)
-        self.bio_text.pack(side="top", anchor="w", pady=(0, 16))
+        self.bio_text = TelegramTextArea(card.body, "Bio", height=4, width=55)
+        self.bio_text.pack(side="top", fill="x", pady=(0, 16))
 
         RoundedButton(card.body, "Save Changes", command=self.on_save_profile_click).pack(side="top", anchor="w")
 
