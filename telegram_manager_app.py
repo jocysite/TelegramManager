@@ -33,6 +33,7 @@ import datetime
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import tkinter as tk
@@ -88,6 +89,11 @@ from telethon.utils import get_input_media, get_input_photo, is_video
 # the same Windows user account on this same machine can decrypt them.
 KEYRING_SERVICE = "TelegramManagerApp"
 KEYRING_USERNAME = "credentials"
+
+# The API Hash on my.telegram.org is always a 32-character lowercase hex
+# string - checking the format locally turns a mistyped/mis-pasted hash into
+# a clear message instead of Telegram's opaque "SendCodeRequest" error.
+API_HASH_PATTERN = re.compile(r"^[0-9a-fA-F]{32}$")
 
 def resource_path(*parts):
     base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -441,6 +447,32 @@ def styled_entry(parent, textvariable, width=30, show=None):
     return entry
 
 
+def styled_secret_entry(parent, textvariable, width=30):
+    """A masked entry with a 'Show'/'Hide' toggle - for values that are
+    pasted rather than typed (like the API Hash), where a stray character
+    from a bad copy/paste is otherwise invisible until Telegram rejects it."""
+    container = tk.Frame(parent, bg=parent["bg"])
+    entry = styled_entry(container, textvariable, width=width, show="*")
+    entry.pack(side="left")
+    toggle_var = tk.StringVar(value="Show")
+    toggle = tk.Label(
+        container, textvariable=toggle_var, bg=parent["bg"], fg=COLOR_ACCENT,
+        font=(FONT_FAMILY, 9), cursor="hand2",
+    )
+    toggle.pack(side="left", padx=(8, 0))
+
+    def on_toggle(event=None):
+        if entry.cget("show") == "*":
+            entry.configure(show="")
+            toggle_var.set("Hide")
+        else:
+            entry.configure(show="*")
+            toggle_var.set("Show")
+
+    toggle.bind("<Button-1>", on_toggle)
+    return container
+
+
 def styled_text(parent, height, width, bg=COLOR_INPUT_BG, fg=COLOR_TEXT_PRIMARY, font=None):
     return tk.Text(
         parent, height=height, width=width, bg=bg, fg=fg, insertbackground=fg,
@@ -480,6 +512,12 @@ anyone else's account.
    - First time: enter API ID, API Hash, and your phone number (with
      country code, e.g. +15551234567) in the form, then click
      "Save & Connect".
+   - API Hash is masked by default since it's tied to your account, but
+     it's pasted rather than typed - use the "Show" link next to it to
+     confirm you copied the full, correct 32-character value from
+     my.telegram.org before connecting. "Could not connect: the
+     api_id/api_hash combination is invalid" almost always means a
+     copy/paste mistake in this field.
    - Your credentials are encrypted and saved in Windows Credential
      Manager (protected by Windows DPAPI) - not as a plain text file.
      Only your own Windows user account, on this same PC, can decrypt
@@ -870,7 +908,7 @@ class TelegramManagerApp(tk.Tk):
         styled_entry(form_card.body, self.api_id_var, width=36).grid(row=1, column=1, sticky="w", pady=6)
 
         card_label(form_card.body, "API Hash").grid(row=2, column=0, sticky="e", padx=(0, 10), pady=6)
-        styled_entry(form_card.body, self.api_hash_var, width=36, show="*").grid(row=2, column=1, sticky="w", pady=6)
+        styled_secret_entry(form_card.body, self.api_hash_var, width=32).grid(row=2, column=1, sticky="w", pady=6)
 
         card_label(form_card.body, "Phone (+countrycode...)").grid(row=3, column=0, sticky="e", padx=(0, 10), pady=6)
         styled_entry(form_card.body, self.phone_var, width=36).grid(row=3, column=1, sticky="w", pady=6)
@@ -1311,6 +1349,15 @@ class TelegramManagerApp(tk.Tk):
 
         if not api_hash or not phone:
             messagebox.showerror("Missing info", "Fill in API ID, API Hash and Phone.")
+            return
+        if not API_HASH_PATTERN.match(api_hash):
+            messagebox.showerror(
+                "Invalid API Hash",
+                "API Hash should be exactly the 32-character hexadecimal string "
+                "shown as 'App api_hash' on my.telegram.org - use the 'Show' "
+                "toggle next to the field to check what you actually typed or "
+                "pasted, then try again.",
+            )
             return
 
         save_config(
